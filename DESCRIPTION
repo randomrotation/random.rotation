@@ -1,0 +1,15 @@
+Package: random.rotation
+Title: Enhanced Random Rotation Ensembles
+Version: 0.0.0.9000
+Authors@R: 
+    person(given = "Rico",
+           family = "Blaser",
+           role = c("aut", "cre"),
+           email = "randomrotation@gmail.com")
+Description: This package provides and implementation of random rotation ensembles and extensions, as described in the research paper [Regularizing axis-aligned ensembles via
+data rotations that favor simpler learners (2020)](http://stats.lse.ac.uk/fryzlewicz/rre/regsim.pdf) by R. Blaser and P. Fryzlewicz. It also provides a number of useful pre-processing utilities to normalise and impute data before applying rotations.
+License: `use_mit_license()`
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
