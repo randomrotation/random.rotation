@@ -1,0 +1,160 @@
+# README
+
+# This file contains an example of how the random.rotation R package is used. 
+
+################################################################################
+# Note: to install the package, please follow these steps:
+# > library("devtools")
+# > install_github("randomrotation/random.rotation")
+################################################################################
+
+
+#
+# Please also consult the following paper by R. Blaser and P. Fryzlewicz:
+#
+# Regularizing axis-aligned ensembles via 
+#                       data rotations that favor simpler learners (2020)
+#
+# URL: http://stats.lse.ac.uk/fryzlewicz/rre/regsim.pdf
+#
+#
+# The example uses the IRIS data set from the UCI Machine Learning Repository
+# URL: http://archive.ics.uci.edu/ml/datasets.php
+#
+
+
+# EXAMPLE
+
+library(random.rotation)   # load the R package 
+library(randomForest)      # random forest classifier
+
+NUM_ROTA <- 20   # number of rotations to create 
+NUM_TREE <- 20   # number of trees per rotation
+
+set.seed(42)     # reproducible results
+
+
+# First, the data set is read and pre-processed. Type conversions are per-
+# formed automatically for string columns with many numeric entries. Columns
+# with too many unique string- or factor values are removed, as these are
+# essentially keys into the data. Columns with extreme duplication are also
+# removed, as these tend not to add much predictive value. No scaling or
+# rotation is performed here.
+
+pre <- pre_sample_preprocessing(iris, "Species")
+X_pre <- pre[[1]]  # pre-processed X matrix
+Y_pre <- pre[[2]]  # pre-processed Y vector
+
+
+# Next, we pre-create an array of NUM_ROTA - 1 random rotation matrices plus 
+# the identity rotation. It would also be possible to generate these one-by-one
+# inside of the test loop but creating them here keeps the code more flexible.
+
+mArray <- create_random_rotation_matrix_array(NUM_ROTA-1, 
+                                              length(numeric_cols(X_pre)))
+
+
+# We proceed by dividing the input data into random, disjoint training (70%)
+# and testing (30%) data rows
+
+r_train <- generate_training_row_indices(nrow(X_pre), 0.7)
+r_test  <- generate_testing_row_indices(nrow(X_pre), r_train)
+
+
+# Then the already pre-processed input data is further processed by scaling
+# numeric columns to [0, 1] and imputing missing numeric values to the median
+# of the in-sample values. Both of these operations are performed with only
+# in-sample inputs to ensure no out-of-sample data can have an impact.  
+
+X <- post_sample_preprocessing(X_pre, Y_pre, r_train, r_test)
+Y <- Y_pre
+
+
+# Working now on scaled numeric values, we can finally apply the rotations. As
+# discussed in the paper, there are many ways to scale the data but it is 
+# definitely not advisable to perform rotations on unscaled input data. We
+# create an array of transformed predictors, one entry for each rotation.
+
+tArray <- df_apply_random_rotations(X, mArray)
+
+
+# Now that we have the rotated predictors nicely lined up, it is time to apply
+# a classifier to each set of rotated predictors. In this case, we take ad-
+# vantage of the excellent randomForest R package to create an array of 
+# classifiers. Obviously, only training data is used.  
+
+cArray <- lapply(1:NUM_ROTA, 
+                 function(i) randomForest(x=tArray[[i]][r_train,], 
+                                          y=Y[r_train], 
+                                          ntree=NUM_TREE))
+
+
+# Here we get to the meat of the paper: our goal is to find those rotations that
+# produced classifiers with the lowest complexity. On page 3 of the paper in 
+# formula (5), we define complexity in terms of the median number of nodes of
+# the trees in the forest plus a tie-breaker based on the depth of the trees. 
+# Obviously, other measures are possible here but let's stick with this one.
+
+nodes <- sapply(1:NUM_ROTA, 
+                function(i) median(cArray[[i]]$forest$ndbigtree))
+
+depth <- sapply(1:NUM_ROTA, 
+                function(i) mean(sapply(1:NUM_TREE, 
+                  function(x) tree_height(cArray[[i]]$forest$treemap[,,x]))))
+
+xArray <- nodes + depth/length(r_train)  # complexity
+
+
+# At this point, we know the average complexity of the trees in each of the 
+# NUM_ROTA rotations. Instead of equal-weighting all predictors across the
+# different rotations, we want to over-weight those predictors that benefit from
+# favorable rotations. For this reason, we will sort all rotations by comp-
+# lexity. In addition, we look at the OOB error but only to help us decide
+# how many of the least complex rotations we should consider and how much weight
+# we should put on each rotation. In either case, rotations with lower
+# complexity scores *always* carry a weight that is at least as high as
+# rotations with higher complexity scores.
+
+oArray <- as.numeric(sapply(1:NUM_ROTA, 
+                            function(i) cArray[[i]]$err.rate[NUM_TREE,1]))
+ 
+
+# With the OOB error known, we can now proceed with actually computing the
+# weights of each rotation. In the present example, we use the exponential
+# weighting function described on pages 4-5 of the paper. In a first step, 
+# the tuning parameter h is optimized, as described in the previous comment
+# above. Then the weight function is applied to obtain a weight for the pre-
+# dictors of each rotation.
+
+h <- compute_tuning_parameter(xArray, oArray, weights_exp, 
+                              min_step=0.1, step_size=0.1)
+
+wArray <- weights_exp(NUM_ROTA, h)
+
+
+# In the paper we describe the possibility of adding more trees to each ro-
+# tation, depending on the computed weights and the total number of desired
+# trees in the ensemble. For the sake of clarity, we omit this step in this
+# example but the number of required trees on each rotation can be computed
+# using the function num_trees_per_rot in the package. 
+
+
+# And finally, let's investigate the out-of-sample performance of the ensemble
+# by applying the now weighted ensemble to the test data. First we obtain a 
+# vector of out-of-sample predictions and corresponding errors and then we 
+# tabulate the weighted votes from different rotations to obtain a merged
+# prediction.
+
+pArray <- lapply(1:NUM_ROTA, 
+                 function(i) predict(cArray[[i]], newdata=tArray[[i]][r_test,]))
+
+v1 <- Reduce('+', lapply(1:NUM_ROTA, 
+                  function(i) sapply(levels(Y), function(x)
+                                                  wArray[i]*(pArray[[i]]==x))))
+
+v2 <- levels(Y)[(apply(v1,1,max)==v1) %*% (1:length(levels(Y)))]
+  
+
+# The resulting ensemble prediction error is then given by
+
+sum(Y[r_test]!=v2)/length(r_test)  
