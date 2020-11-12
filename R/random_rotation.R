@@ -585,7 +585,7 @@ df_apply_random_rotations <- function(df, mArray)
 
 #' Optimize tuning parameter
 #'
-#' First sort rotations by complexity (primary criterium) and then perform a grid search over h
+#' First sort rotations by complexity (primary critera) and then perform a grid search over h
 #' to find the value that produces the rotation weighting with lowest OOB error.
 #' @param v_complex vector of rotation complexities
 #' @param v_oob vector of rotation OOB errors
